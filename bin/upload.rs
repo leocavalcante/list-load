@@ -15,8 +15,7 @@ fn upload(entry: DirEntry, bucket: Bucket) -> YouCanDoIt<String> {
     let filename = format!("{}/{}.csv", base_path, state);
 
     println!("Uploading {} (size {})", filename, contents.len());
-
-    let _result = bucket.put_object(filename.as_ref(), contents.as_ref(), "text/plain")?;
+    bucket.put_object_stream(filename.as_ref(), contents.as_ref());
 
     Ok(filename)
 }
@@ -28,12 +27,11 @@ async fn eval() -> YouCanDoIt {
     dir.flat_map(|result| result)
         .for_each(|entry| {
             let bucket = bucket.clone();
-            tokio::task::spawn_blocking(move || {
-                match upload(entry, bucket) {
-                    Ok(filename) => println!("Done {}", filename),
-                    Err(e) => eprintln!("Upload failed: {}", e),
-                }
-            });
+
+            match upload(entry, bucket) {
+                Ok(filename) => println!("Done {}", filename),
+                Err(e) => eprintln!("Upload failed: {}", e),
+            }
         });
 
     Ok(())
