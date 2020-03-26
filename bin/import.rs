@@ -1,3 +1,4 @@
+use regex::Regex;
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 
@@ -30,12 +31,12 @@ struct ContactImport {
     url: String,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct ImportContext {
     api_url: String,
     account_id: String,
     list_name_prefix: String,
-    state: String,
+    name: String,
     file_url: String,
     client: reqwest::Client,
 }
@@ -45,8 +46,8 @@ async fn import(context: ImportContext) -> YouCanDoIt {
         .post(format!("{}/accounts/{}/lists", context.api_url, context.account_id).as_str())
         .json(&CreateListRequest {
             list: CreateListRequestList {
-                name: format!("{} {}", context.list_name_prefix, context.state),
-                description: format!("Lista do estado {}", context.state),
+                name: format!("{} {}", context.list_name_prefix, context.name),
+                description: format!("Lista {}", context.name),
             }
         })
         .send()
@@ -84,8 +85,12 @@ async fn eval() -> YouCanDoIt {
     let account_id = std::env::var("ACCOUNT_ID")?;
     let list_name_prefix = std::env::var("LIST_NAME_PREFIX")?;
 
+    let mut args = std::env::args();
+    let name_pattern = args.nth(1).unwrap();
+    let name_re = Regex::new(name_pattern.as_str())?;
+
     let bucket = bucket()?;
-    let results = bucket.list_all(base_path, None)?;
+    let results = bucket.list(base_path, None).await?;
 
     let mut headers = reqwest::header::HeaderMap::new();
     headers.insert("X-Auth-Token", reqwest::header::HeaderValue::from_str(api_token.as_str())?);
@@ -96,23 +101,25 @@ async fn eval() -> YouCanDoIt {
         .build()?;
 
     let results = results.iter()
-        .flat_map(|result| {
-            let (bucket, _) = result;
-            let bucket = bucket.clone();
-            bucket.contents
-        })
+        .flat_map(|bucket| &bucket.contents)
         .filter(|obj| obj.size > 0)
         .map(|obj| {
-            let state = obj.key[11..13].to_string();
             let file_url = format!("{}/{}", base_url, &obj.key);
-            (state, file_url)
+            let caps = name_re.captures(&file_url);
+
+            if let None = caps {
+                panic!("{}", file_url)
+            }
+
+            let name = caps.unwrap().get(1).unwrap().as_str().to_string();
+            (name, file_url)
         })
-        .map(|(state, file_url)| {
+        .map(|(name, file_url)| {
             let context = ImportContext {
                 api_url: api_url.clone(),
                 account_id: account_id.clone(),
                 list_name_prefix: list_name_prefix.clone(),
-                state,
+                name,
                 file_url,
                 client: client.clone(),
             };
